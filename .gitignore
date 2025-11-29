@@ -1,0 +1,70 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+*.egg
+
+# Virtual environments
+.venv
+venv/
+env/
+
+# Environment variables
+.env
+.env.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Jupyter Notebook
+.ipynb_checkpoints/
+*.ipynb
+
+# Logs
+*.log
+logs/
+
+# Milvus database
+milvus_db_hub/
+*.db
+
+# Models
+model-hub/Qwen3-Embedding-0.6B/
+model-hub/Qwen3-Reranker-0.6B/
+model-hub/*.safetensors
+
+# Data
+data/textbooks/text/*.txt
+data/textbooks/jsonl/*.jsonl
+
+# Keep directory structure
+!model-hub/.gitkeep
+!data/textbooks/text/.gitkeep
+!data/textbooks/jsonl/.gitkeep
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Coverage reports
+htmlcov/
+.coverage
+.coverage.*
+coverage.xml
+*.cover
+
+# Testing
+.pytest_cache/
+.tox/
