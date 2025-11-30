@@ -5,11 +5,16 @@ FastAPI服务 - 医学知识混合检索API
 """
 
 import os
+import asyncio
 from typing import List, Optional
+from concurrent.futures import ThreadPoolExecutor
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 import uvicorn
+from dotenv import load_dotenv
 from src.hybrid_retriever import HybridRetriever
+
+load_dotenv()
 
 # 初始化FastAPI应用
 app = FastAPI(
@@ -20,6 +25,9 @@ app = FastAPI(
 
 # 全局检索器实例
 retriever: Optional[HybridRetriever] = None
+
+# 线程池执行器（用于并发处理）
+executor: Optional[ThreadPoolExecutor] = None
 
 
 class SearchQuery(BaseModel):
@@ -47,29 +55,39 @@ class SearchResponse(BaseModel):
 
 @app.on_event("startup")
 async def startup_event():
-    """应用启动时初始化检索器"""
-    global retriever
+    """应用启动时初始化检索器和线程池"""
+    global retriever, executor
     try:
+        # 初始化检索器
         retriever = HybridRetriever(
-            uri=os.getenv("MILVUS_URI", "milvus_db_hub/med_corpus.db"),
-            collection_name=os.getenv("COLLECTION_NAME", "med_corpus"),
-            model_path=os.getenv("MODEL_PATH", "model-hub/Qwen3-Embedding-0.6B"),
+            uri="./milvus_db_hub/med_corpus.db",
+            collection_name="med_corpus",
+            model_path="./model-hub/Qwen3-Embedding-0.6B",
             openai_api_key=os.getenv("OPENAI_API_KEY"),
             openai_base_url=os.getenv("OPENAI_BASE_URL")
         )
         print("✓ 混合检索器初始化成功")
+        
+        # 初始化线程池
+        max_workers = int(os.getenv("MAX_WORKERS", "10"))
+        executor = ThreadPoolExecutor(max_workers=max_workers)
+        print(f"✓ 线程池初始化成功 (max_workers={max_workers})")
+        
     except Exception as e:
-        print(f"✗ 初始化检索器失败: {e}")
+        print(f"✗ 初始化失败: {e}")
         raise
 
 
 @app.on_event("shutdown")
 async def shutdown_event():
     """应用关闭时清理资源"""
-    global retriever
+    global retriever, executor
     if retriever:
         retriever.close()
         print("✓ 已关闭检索器连接")
+    if executor:
+        executor.shutdown(wait=True)
+        print("✓ 已关闭线程池")
 
 
 @app.get("/")
@@ -79,7 +97,8 @@ async def root():
         "message": "医学知识检索API",
         "version": "1.0.0",
         "endpoints": {
-            "POST /search": "执行医学知识检索和总结"
+            "POST /search": "执行医学知识检索和总结（map_reduce模式，深度分析）",
+            "POST /search_fast": "快速检索和总结（stuff模式，快速响应）"
         }
     }
 
@@ -92,48 +111,113 @@ async def health_check():
     return {"status": "healthy"}
 
 
+async def _process_single_query(
+    query_item: SearchQuery,
+    summary_mode: str = "map_reduce",
+    limit: int = 10
+) -> SearchResult:
+    """
+    处理单个查询（在线程池中执行）
+    
+    Args:
+        query_item: 查询项
+        summary_mode: 总结模式
+        limit: 检索文档数量限制
+    
+    Returns:
+        搜索结果
+    """
+    try:
+        loop = asyncio.get_event_loop()
+        
+        # 在线程池中执行同步方法
+        summary = await loop.run_in_executor(
+            executor,
+            lambda: retriever.search_results_summary_by_llm(
+                query=query_item.query,
+                search_type="hybrid",
+                limit=limit,
+                subject=query_item.subject,
+                use_rrf=True,
+                summary_mode=summary_mode,
+                model="gpt-4o-mini"
+            )
+        )
+        
+        return SearchResult(
+            query=query_item.query,
+            subject=query_item.subject,
+            summary=summary
+        )
+        
+    except Exception as e:
+        # 如果查询失败，返回错误信息
+        return SearchResult(
+            query=query_item.query,
+            subject=query_item.subject,
+            summary=f"检索失败: {str(e)}"
+        )
+
+
 @app.post("/search", response_model=SearchResponse)
 async def search(request: SearchRequest):
     """
-    执行医学知识检索和总结
+    执行医学知识检索和总结（深度分析版）
     
-    使用混合检索（BM25 + 语义向量）和LLM进行智能总结
+    使用混合检索（BM25 + 语义向量）+ Map-Reduce模式LLM总结
+    - 检索10个文档
+    - 使用map_reduce模式进行深度分析
+    - 并发处理多个查询，显著提升速度
+    
+    适合：需要全面、深入分析的场景
     """
-    if retriever is None:
-        raise HTTPException(status_code=503, detail="检索器未初始化")
+    if retriever is None or executor is None:
+        raise HTTPException(status_code=503, detail="服务未初始化")
     
     if not request.queries:
         raise HTTPException(status_code=400, detail="查询列表不能为空")
     
-    results = []
+    # 并发处理所有查询
+    tasks = [
+        _process_single_query(query_item, summary_mode="map_reduce", limit=10)
+        for query_item in request.queries
+    ]
     
-    for query_item in request.queries:
-        try:
-            # 使用混合检索 + map_reduce总结
-            summary = retriever.search_results_summary_by_llm(
-                query=query_item.query,
-                search_type="hybrid",
-                limit=10,
-                subject=query_item.subject,
-                use_rrf=True,
-                summary_mode="map_reduce"
-            )
-            
-            results.append(SearchResult(
-                query=query_item.query,
-                subject=query_item.subject,
-                summary=summary
-            ))
-            
-        except Exception as e:
-            # 如果单个查询失败，返回错误信息
-            results.append(SearchResult(
-                query=query_item.query,
-                subject=query_item.subject,
-                summary=f"检索失败: {str(e)}"
-            ))
+    # 使用 asyncio.gather 并发执行所有任务
+    results = await asyncio.gather(*tasks)
     
-    return SearchResponse(results=results)
+    return SearchResponse(results=list(results))
+
+
+@app.post("/search_fast", response_model=SearchResponse)
+async def search_fast(request: SearchRequest):
+    """
+    快速检索和总结（轻量级版）
+    
+    使用混合检索（BM25 + 语义向量）+ Stuff模式LLM总结
+    - 仅检索3个最相关文档
+    - 使用stuff模式一次性总结
+    - 并发处理多个查询
+    - 更快的响应速度，降低API流量压力
+    
+    适合：需要快速响应的场景，或高并发场景
+    """
+    if retriever is None or executor is None:
+        raise HTTPException(status_code=503, detail="服务未初始化")
+    
+    if not request.queries:
+        raise HTTPException(status_code=400, detail="查询列表不能为空")
+    
+    # 并发处理所有查询（使用stuff模式和更少的文档）
+    tasks = [
+        _process_single_query(query_item, summary_mode="stuff", limit=3)
+        for query_item in request.queries
+    ]
+    
+    # 使用 asyncio.gather 并发执行所有任务
+    results = await asyncio.gather(*tasks)
+    
+    return SearchResponse(results=list(results))
 
 
 def main():
