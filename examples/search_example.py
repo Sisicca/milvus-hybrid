@@ -22,7 +22,7 @@ def main():
     retriever = HybridRetriever(
         uri="milvus_db_hub/med_corpus.db",
         collection_name="med_corpus",
-        model_path="model-hub/Qwen3-Embedding-0.6B"
+        model_path="./model-hub/Qwen3-Embedding-0.6B"
     )
     print("初始化完成！\n")
     
