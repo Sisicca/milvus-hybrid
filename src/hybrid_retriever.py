@@ -553,7 +553,9 @@ Please provide the final integrated summary:"""
         try:
             response = self.openai_client.chat.completions.create(
                 model=model,
-                messages=messages
+                messages=messages,
+                temperature=0.5,
+                max_tokens=8192
             )
             return response.choices[0].message.content
         except Exception as e:
