@@ -554,7 +554,7 @@ Please provide the final integrated summary:"""
             response = self.openai_client.chat.completions.create(
                 model=model,
                 messages=messages,
-                temperature=0.5,
+                temperature=0, # 用于总结文档内容，为保证训练和评估的稳定与一致性，不使用随机性
                 max_tokens=8192
             )
             return response.choices[0].message.content
