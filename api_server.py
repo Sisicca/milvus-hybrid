@@ -269,7 +269,8 @@ def main():
     print(f"final_reduce: {final_reduce_enabled} ({'启用最终汇总' if final_reduce_enabled else '跳过最终汇总，直接返回各文档压缩总结'})")
     
     uvicorn.run(
-        "api_server:app",
+        # "api_server:app",
+        app,
         host=args.host,
         port=args.port,
         reload=False
