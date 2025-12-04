@@ -5,6 +5,7 @@ FastAPI服务 - 医学知识混合检索API
 """
 
 import os
+import argparse
 import asyncio
 from typing import List, Optional
 from concurrent.futures import ThreadPoolExecutor
@@ -28,6 +29,9 @@ retriever: Optional[HybridRetriever] = None
 
 # 线程池执行器（用于并发处理）
 executor: Optional[ThreadPoolExecutor] = None
+
+# 全局配置：是否在map_reduce模式下进行最终汇总
+final_reduce_enabled: bool = True
 
 
 class SearchQuery(BaseModel):
@@ -114,7 +118,8 @@ async def health_check():
 async def _process_single_query(
     query_item: SearchQuery,
     summary_mode: str = "map_reduce",
-    limit: int = 10
+    limit: int = 10,
+    final_reduce: bool = True
 ) -> SearchResult:
     """
     处理单个查询（在线程池中执行）
@@ -123,6 +128,7 @@ async def _process_single_query(
         query_item: 查询项
         summary_mode: 总结模式
         limit: 检索文档数量限制
+        final_reduce: 在map_reduce模式下，是否使用LLM对所有压缩文档进行最终汇总
     
     Returns:
         搜索结果
@@ -140,7 +146,8 @@ async def _process_single_query(
                 subject=query_item.subject,
                 use_rrf=True,
                 summary_mode=summary_mode,
-                model="gpt-4o-mini"
+                model="gpt-4o-mini",
+                final_reduce=final_reduce
             )
         )
         
@@ -168,6 +175,7 @@ async def search(request: SearchRequest):
     - 检索10个文档
     - 使用map_reduce模式进行深度分析
     - 并发处理多个查询，显著提升速度
+    - 通过启动参数 --final-reduce 控制是否对所有压缩文档进行最终汇总
     
     适合：需要全面、深入分析的场景
     """
@@ -179,7 +187,12 @@ async def search(request: SearchRequest):
     
     # 并发处理所有查询
     tasks = [
-        _process_single_query(query_item, summary_mode="map_reduce", limit=10)
+        _process_single_query(
+            query_item, 
+            summary_mode="map_reduce", 
+            limit=10,
+            final_reduce=final_reduce_enabled
+        )
         for query_item in request.queries
     ]
     
@@ -222,17 +235,43 @@ async def search_fast(request: SearchRequest):
 
 def main():
     """启动服务"""
-    port = int(os.getenv("PORT", "8000"))
-    host = os.getenv("HOST", "0.0.0.0")
+    global final_reduce_enabled
+    
+    parser = argparse.ArgumentParser(description="医学知识检索API服务")
+    parser.add_argument(
+        "--host", 
+        type=str, 
+        default=os.getenv("HOST", "0.0.0.0"),
+        help="服务监听地址 (默认: 0.0.0.0)"
+    )
+    parser.add_argument(
+        "--port", 
+        type=int, 
+        default=int(os.getenv("PORT", "8000")),
+        help="服务监听端口 (默认: 8000)"
+    )
+    parser.add_argument(
+        "--final-reduce",
+        type=lambda x: x.lower() in ('true', '1', 'yes'),
+        default=True,
+        help="在map_reduce模式下，是否使用LLM对所有压缩文档进行最终汇总 (默认: true)。"
+             "设置为false时直接返回各文档的压缩总结（[Document1]...形式），避免二次总结导致的信息损失。"
+    )
+    
+    args = parser.parse_args()
+    
+    # 设置全局配置
+    final_reduce_enabled = args.final_reduce
     
     print(f"启动医学知识检索API服务...")
-    print(f"服务地址: http://{host}:{port}")
-    print(f"API文档: http://{host}:{port}/docs")
+    print(f"服务地址: http://{args.host}:{args.port}")
+    print(f"API文档: http://{args.host}:{args.port}/docs")
+    print(f"final_reduce: {final_reduce_enabled} ({'启用最终汇总' if final_reduce_enabled else '跳过最终汇总，直接返回各文档压缩总结'})")
     
     uvicorn.run(
         "api_server:app",
-        host=host,
-        port=port,
+        host=args.host,
+        port=args.port,
         reload=False
     )
 

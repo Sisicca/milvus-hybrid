@@ -356,7 +356,8 @@ class HybridRetriever:
         rrf_k: int = 60,
         model: str = "gpt-4o-mini",
         summary_mode: str = "stuff",
-        custom_prompt: Optional[str] = None
+        custom_prompt: Optional[str] = None,
+        final_reduce: bool = True
     ) -> str:
         """
         执行检索并使用LLM总结检索结果
@@ -374,6 +375,8 @@ class HybridRetriever:
             model: LLM模型名称
             summary_mode: 总结模式，可选 "stuff", "map_reduce"
             custom_prompt: 自定义提示词模板，如果为None则使用默认的医疗QA提示词
+            final_reduce: 在map_reduce模式下，是否使用LLM对所有压缩文档进行最终汇总，默认True。
+                          如果为False，则直接返回格式化的各文档总结，避免二次总结导致的信息损失。
         
         Returns:
             LLM生成的总结文本
@@ -458,7 +461,7 @@ Please begin your summary:"""
         elif summary_mode == "map_reduce":
             # 对每个result进行总结，并使用map_reduce模式进行总结
             futures = {}
-            summaries = []
+            summaries = []  # 存储 (idx, summary) 元组，用于保持顺序
             
             logger.info(f"使用map_reduce模式，对 {len(results)} 个文档分别进行总结...")
             
@@ -496,18 +499,29 @@ Present in a concise, structured manner while maintaining accuracy of medical te
                     idx, formatted_result = futures[future]
                     try:
                         summary = future.result()
-                        summaries.append(f"### 文档 {idx+1} 的总结\n{summary}")
+                        summaries.append((idx, summary))
                         logger.debug(f"文档 {idx+1} 总结完成")
                     except Exception as e:
                         logger.error(f"总结文档 {idx+1} 时发生错误: {e}")
-                        summaries.append(f"### 文档 {idx+1} 的原始内容\n{formatted_result}")
+                        summaries.append((idx, formatted_result))
             
             if not summaries:
                 logger.error("所有文档总结都失败")
                 return self.format_results(results, show_score=True, show_subject=True, max_content_length=20000)
             
-            # 对summaries进行汇总
-            combined_summaries = "\n\n".join(summaries)
+            # 按文档索引排序，确保顺序一致
+            summaries.sort(key=lambda x: x[0])
+            
+            # 格式化为 [Document X] 形式
+            formatted_summaries = []
+            for idx, summary in summaries:
+                formatted_summaries.append(f"[Document {idx+1}]\n{summary}")
+            combined_summaries = "\n\n".join(formatted_summaries)
+            
+            # 如果不需要最终汇总，直接返回格式化的压缩文档
+            if not final_reduce:
+                logger.info("final_reduce=False，跳过最终汇总，直接返回各文档的压缩总结")
+                return combined_summaries
             
             logger.info("开始汇总所有文档的总结...")
             
