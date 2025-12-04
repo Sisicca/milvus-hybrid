@@ -473,23 +473,32 @@ Please begin your summary:"""
                     if custom_prompt:
                         prompt = custom_prompt.format(query=query, formatted_result=formatted_result)
                     else:
-                        prompt = f"""You are a professional medical knowledge assistant. Please summarize the key information relevant to the user's question from the following medical document excerpt.
+                        prompt = f"""# Role & Task
+You are a medical information extraction expert. Your task is to analyze the provided medical document excerpt and distill all key information fragments that are **directly relevant** to the user's question.
 
-User Question:
-{query}
+# Core Instruction
+**Strictly extract, summarize, and structure the information from the given text. Do NOT answer the question, provide interpretations, inferences, or any information beyond the provided document.**
 
-Medical Document Content:
-{formatted_result}
+# Input
+- **User's Question:** {query}
+- **Medical Document Excerpt:** {formatted_result}
 
-Please extract key medical information related to the question, including:
-- Core concepts and definitions
-- Pathological mechanisms
-- Clinical manifestations
-- Diagnostic and treatment points
-- Medication information
-- Other important details
+# Processing Steps
+1.  **Identify Relevance:** Scrutinize the document and pinpoint every piece of information (e.g., sentences, clauses, data) that is pertinent to the user's question.
+2.  **Extract & Summarize:** For each relevant information fragment, rephrase it concisely while strictly preserving the original meaning and precise medical terminology.
+3.  **Categorize & Structure:** Organize the summarized points into the following logical categories. If a category has no relevant information, omit it.
 
-Present in a concise, structured manner while maintaining accuracy of medical terminology."""
+# Output Format & Requirements
+- **Output Purpose:** This output is a structured summary of relevant information from ONE document, for subsequent integration.
+- **Format:** Use clear, nested bullet points under the following headings. Be concise.
+
+**Structured Summary (Based on Document Content):**
+- **Core Concepts & Definitions:** [Summarize relevant definitions and key concepts found.]
+- **Pathophysiology & Mechanisms:** [Summarize relevant pathological processes.]
+- **Clinical Manifestations:** [Summarize relevant symptoms, signs, etc.]
+- **Diagnostic Criteria/Methods:** [Summarize relevant diagnostic information.]
+- **Treatment Approaches & Medications:** [Summarize relevant therapeutic strategies and drug information.]
+- **Other Critical Details:** [Summarize any other pertinent information, e.g., prognosis, risk factors.]"""
                     
                     future = executor.submit(self._call_llm, model, [{"role": "user", "content": prompt}])
                     futures[future] = (idx, formatted_result)
@@ -525,23 +534,34 @@ Present in a concise, structured manner while maintaining accuracy of medical te
             
             logger.info("开始汇总所有文档的总结...")
             
-            final_prompt = f"""You are a professional medical knowledge assistant. Below are key information summaries extracted from multiple medical documents.
+            final_prompt = f"""# Role & Task
+You are a medical information synthesis specialist. Your task is to integrate several pre-existing summaries (each based on a different medical document) about the same query into one unified, coherent, and non-redundant summary.
 
-User Question:
-{query}
+# Core Instruction
+**Synthesize the information from the provided summaries ONLY. Create a logically flowing narrative that follows standard medical exposition. Do NOT generate new facts, answer the question directly, or make inferences beyond the provided summaries.**
 
-Summaries from Each Document:
-{combined_summaries}
+# Input
+- **User's Question:** {query}
+- **Individual Document Summaries:** {combined_summaries}
 
-Please integrate this information into a coherent and comprehensive medical answer. Requirements:
+# Processing Steps
+1.  **Information Fusion:** Merge information from all summaries. When multiple summaries mention the same point, present it once in its most complete and accurate form.
+2.  **Logical Structuring:** Organize the fused information into a standard medical knowledge structure. Use the sequence below as a template. Deviate only if the content logically demands it.
+    -   **Definition / Overview**
+    -   **Etiology & Pathogenesis**
+    -   **Clinical Presentation (Symptoms & Signs)**
+    -   **Diagnostic Approach**
+    -   **Management & Treatment (Including Medications)**
+    -   **Prognosis / Other Key Considerations**
+3.  **Prioritize Clarity:** Ensure the summary reads as a continuous, well-structured text, not just a list of points from different sources.
 
-1. **Information Integration**: Synthesize information from all documents, removing duplicate content
-2. **Clear Logic**: Organize content following medical logic (e.g., Definition → Etiology → Symptoms → Diagnosis → Treatment → Prognosis)
-3. **Highlight Key Points**: Emphasize key medical knowledge and clinical points
-4. **Completeness**: Do not omit important medical information
-5. **Format Standards**: Use Markdown format with clear structure
+# Output Format & Requirements
+- **Output Purpose:** This is the final, integrated summary for the user, representing a consolidation of all sourced information.
+- **Format:** Use Markdown for clear headings and subheadings. The output should be a flowing document.
 
-Please provide the final integrated summary:"""
+**Final Integrated Summary**
+
+[Begin your integrated summary here. Write in full sentences and paragraphs under the logical headings mentioned above.]"""
             
             try:
                 response = self._call_llm(model, [{"role": "user", "content": final_prompt}])
